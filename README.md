@@ -1,9 +1,9 @@
 # Controllo accessi con tessera e conferma sul telefono
 
-Progetto di **Davide Cesari** e **Alessio Ferrari** · classe 5CI · ITT «G. Marconi» Rovereto · a.s. 2026/27
+Progetto di **Davide Cesari** e **Alessio Ferrari** · classe 5CI · ITT G. Marconi Rovereto · a.s. 2026/27
 
 
-Sistema che affianca all'impianto RFID esistente (porte dei laboratori e armadietti) un **secondo fattore**: la conferma dell'apertura sul telefono dell'intestatario della tessera, firmata con una passkey (WebAuthn).
+Sistema che affianca all'impianto RFID esistente (porte dei laboratori e armadietti dei telefoni) un **secondo fattore**: la conferma dell'apertura sul telefono dell'intestatario della tessera, firmata con una passkey (WebAuthn).
 
 > **Stato del progetto:** in sviluppo, Fase 0 (sopralluogo e banco di prova).
 
@@ -51,9 +51,7 @@ Tessera sul lettore
 
 Topic MQTT principali:
 
-- `porte/<id>/tessera`: UID letto dal nodo
-- `porte/<id>/stato`: apertura effettiva (reed)
-- `porte/<id>/comando`: LED e buzzer
+da definire
 
 ## Regole di anomalia
 
@@ -87,19 +85,6 @@ Topic MQTT principali:
 ├── deploy/        # Docker Compose, Mosquitto, Caddy
 ├── docs/          # Documentazione tecnica, dossier privacy
 └── demo/          # Demo del protocollo di Schnorr (approfondimento)
-```
-
-## Avvio rapido (sviluppo)
-
-> Da completare man mano che i componenti prendono forma.
-
-```bash
-# Clona il repository
-git clone <url-del-repo>
-cd <nome-repo>
-
-# Avvia broker, backend e database
-docker compose up -d
 ```
 
 **Nota su HTTPS:** WebAuthn funziona solo su HTTPS con un nome di dominio (non un IP). Per lo sviluppo va bene `localhost`; per provare dal telefono si può usare Tailscale (`tailscale cert`) oppure il dominio della scuola con Caddy e Let's Encrypt. Il nome (RP ID) va scelto una volta sola: cambiarlo invalida tutte le passkey registrate.
