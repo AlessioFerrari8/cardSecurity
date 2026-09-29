@@ -1,93 +1,142 @@
-# cardSecurity
+# Controllo accessi con tessera e conferma sul telefono
+
+Progetto di **Davide Cesari** e **Alessio Ferrari** · classe 5CI · ITT «G. Marconi» Rovereto · a.s. 2026/27
 
 
+Sistema che affianca all'impianto RFID esistente (porte dei laboratori e armadietti) un **secondo fattore**: la conferma dell'apertura sul telefono dell'intestatario della tessera, firmata con una passkey (WebAuthn).
 
-## Getting started
+> **Stato del progetto:** in sviluppo, Fase 0 (sopralluogo e banco di prova).
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+---
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+## Il problema
 
-## Add your files
+La tessera RFID non dimostra chi la sta usando. Se viene persa o rubata, apre tutto ciò che la carta permette e nel log l'apertura risulta fatta dal proprietario.
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## La soluzione
+
+Dopo il passaggio della tessera, il titolare riceve una notifica sul telefono e conferma l'apertura:
+
+1. il server manda una **sfida casuale** (nonce);
+2. il telefono la **firma con la chiave privata** della passkey, dopo lo sblocco locale (volto, impronta o PIN);
+3. il server **verifica la firma con la chiave pubblica** registrata.
+
+Il server non riceve mai la chiave privata e non vede alcun dato biometrico: la scuola tratta solo dati ordinari, evitando il problema GDPR del riconoscimento facciale su server.
+
+Il sistema lavora in **modalità passiva**: la porta si apre comunque, l'apertura viene valutata a posteriori (entro 30 secondi) e le anomalie vengono segnalate agli admin.
+
+## Flusso di un'apertura
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.marconirovereto.it/autonomia_5ci/cesari_ferrari/cardsecurity.git
-git branch -M main
-git push -uf origin main
+Tessera sul lettore
+   └─> ESP32 legge l'UID e lo pubblica via MQTT
+        └─> Backend: tessera nota e regole rispettate?
+             ├─ no ─> Anomalia: log + notifica agli admin
+             └─ sì ─> Push con nonce al titolare
+                       ├─ firma valida entro 30 s ─> Apertura confermata (solo log)
+                       └─ nessuna firma / «Non sono stato io» ─> Anomalia,
+                          tessera «in osservazione», notifica agli admin
 ```
 
-## Integrate with your tools
+## Architettura
 
-* [Set up project integrations](https://gitlab.marconirovereto.it/autonomia_5ci/cesari_ferrari/cardsecurity/-/settings/integrations)
+| Componente | Tecnologia | Ruolo |
+|---|---|---|
+| Nodo porta | ESP32 + lettore RFID + sensore reed + buzzer/LED | Legge l'UID, rileva l'apertura fisica, dà feedback |
+| Broker | Mosquitto, MQTT su TLS (porta 8883) | Comunicazione tra nodi e backend, utente e ACL per nodo |
+| Backend | Python, FastAPI, paho-mqtt, py_webauthn | Regole di anomalia, verifica WebAuthn, Web Push, API REST |
+| Database | PostgreSQL | Eventi, tessere, credenziali, sfide, anomalie |
+| Frontend | Angular (PWA) | Vista personale (passkey, conferma) e dashboard admin |
+| Camera (opzionale) | ESP32-CAM | Solo su anomalia, fase futura, fuori dal prototipo |
 
-## Collaborate with your team
+Topic MQTT principali:
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+- `porte/<id>/tessera`: UID letto dal nodo
+- `porte/<id>/stato`: apertura effettiva (reed)
+- `porte/<id>/comando`: LED e buzzer
 
-## Test and Deploy
+## Regole di anomalia
 
-Use the built-in continuous integration in GitLab.
+| # | Regola | Fase |
+|---|---|---|
+| 1 | Tessera sconosciuta | 1 |
+| 2 | Nessuna conferma entro 30 secondi | 1 |
+| 3 | Porta aperta senza tessera, o tenuta aperta oltre un minuto | 1 |
+| 4 | Apertura fuori fascia oraria o su porta non permessa | 2 |
+| 5 | Tessera smarrita o in osservazione | 2 |
+| 6 | Sequenza impossibile (stessa tessera su due porte lontane in meno di un minuto) | 2 |
+| 7 | Incrocio con l'orario: il docente risulta in lezione in un'altra aula | 2 |
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+## Hardware (per porta, circa 25–40 €)
 
-***
+- ESP32 DevKit (o ESP32-S3)
+- Lettore RFID: RC522 o PN532 (13,56 MHz), RDM6300 (125 kHz), da scegliere dopo il sopralluogo
+- Sensore magnetico reed
+- Buzzer e LED
+- Scatola stampata in 3D, alimentatore USB 5 V
 
-# Editing this README
+## Struttura del repository
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+> Da adattare alla struttura effettiva del repo.
 
-## Suggestions for a good README
+```
+.
+├── firmware/      # Firmware ESP32 (nodo porta)
+├── backend/       # FastAPI, motore di regole, WebAuthn, Web Push
+├── frontend/      # PWA Angular (personale + dashboard admin)
+├── deploy/        # Docker Compose, Mosquitto, Caddy
+├── docs/          # Documentazione tecnica, dossier privacy
+└── demo/          # Demo del protocollo di Schnorr (approfondimento)
+```
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+## Avvio rapido (sviluppo)
 
-## Name
-Choose a self-explaining name for your project.
+> Da completare man mano che i componenti prendono forma.
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+```bash
+# Clona il repository
+git clone <url-del-repo>
+cd <nome-repo>
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+# Avvia broker, backend e database
+docker compose up -d
+```
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+**Nota su HTTPS:** WebAuthn funziona solo su HTTPS con un nome di dominio (non un IP). Per lo sviluppo va bene `localhost`; per provare dal telefono si può usare Tailscale (`tailscale cert`) oppure il dominio della scuola con Caddy e Let's Encrypt. Il nome (RP ID) va scelto una volta sola: cambiarlo invalida tutte le passkey registrate.
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+## Fasi del progetto
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+| Fase | Periodo | Risultato |
+|---|---|---|
+| 0 · Sopralluogo e banco | ottobre–novembre | Nodo funzionante sul banco, l'UID compare nella dashboard |
+| 1 · Una porta, modalità passiva | dicembre–febbraio | Nodo su una porta reale, regole 1–3, dashboard eventi e anomalie |
+| 2 · Conferma sul telefono | marzo–aprile | PWA con passkey, push, conferma WebAuthn, regole 4–7 |
+| 3 · Rifinitura ed esame | maggio | Documentazione, dossier privacy, demo di Schnorr, test con docenti volontari |
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+Regola di lavoro: ogni fase ha un **ramo Git**, una **demo di 5 minuti** e una **pagina di documentazione**.
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+## Privacy e conformità
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+- Nessun dato biometrico, nessuna foto, nessun PIN nel database.
+- Dati trattati: UID delle tessere, nome e ruolo del personale, email istituzionale, chiavi pubbliche, log degli accessi, orario.
+- Conservazione (proposta, da confermare con il DPO): eventi 90 giorni, anomalie fino alla chiusura più 90 giorni, sfide 24 ore.
+- Accesso ai dati solo per gli admin, con doppio fattore.
+- Gli armadietti restano nel solo monitoraggio delle regole, senza conferma sul telefono.
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+## Limiti dichiarati
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+- La porta si apre comunque (modalità passiva).
+- Serve il telefono con la PWA installata.
+- La firma non prova la prossimità del telefono alla porta.
+- Il nodo camera è fuori dal progetto di quest'anno.
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+## Approfondimento: Schnorr e prove a conoscenza zero
 
-## License
-For open source projects, say how it is licensed.
+WebAuthn è un'autenticazione a sfida e risposta con firma digitale, **non** una prova a conoscenza zero. Le ZKP sono trattate a parte con una demo Python del protocollo di identificazione di Schnorr (cartella `demo/`).
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+## Autori
+
+- Davide Cesari
+- Alessio Ferrari
+
+Docente di riferimento: prof. Kevin Zago
